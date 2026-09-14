@@ -1,0 +1,16 @@
+.env
+.next/
+node_modules/
+*.tsbuildinfo
+__pycache__/
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+.ruff_cache/
+*.pyc
+data/*
+!data/.gitkeep
+downloads/*
+!downloads/.gitkeep
+work/

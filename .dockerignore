@@ -1,0 +1,12 @@
+.git
+.gitignore
+.env
+work
+outputs
+data
+downloads
+**/__pycache__
+**/.pytest_cache
+apps/web/.next
+apps/web/node_modules
+

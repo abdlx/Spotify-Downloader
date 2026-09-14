@@ -1,0 +1,24 @@
+services:
+  api:
+    volumes:
+      - ./app:/app/app
+      - ./data:/app/data
+      - ./downloads:/downloads
+    command: ["uvicorn", "app.api:app", "--host", "0.0.0.0", "--port", "8000", "--reload", "--no-access-log"]
+  worker:
+    volumes:
+      - ./app:/app/app
+      - ./data:/app/data
+      - ./downloads:/downloads
+  web:
+    build:
+      context: apps/web
+      dockerfile: Dockerfile.dev
+    volumes:
+      - ./apps/web:/app
+      - web_node_modules:/app/node_modules
+    command: ["npm", "run", "dev"]
+
+volumes:
+  web_node_modules:
+

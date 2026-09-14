@@ -1,0 +1,32 @@
+[project]
+name = "local-music-library"
+version = "1.0.0"
+description = "Durable local-first Spotify metadata to authorized audio downloader"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "fastapi==0.103.2",
+  "uvicorn[standard]==0.23.2",
+  "pydantic==2.11.7",
+  "spotdl==4.5.2",
+  "yt-dlp[default]==2026.8.19",
+  "yt-dlp-ejs==0.8.0",
+  "requests[socks]==2.32.4",
+]
+
+[project.optional-dependencies]
+test = [
+  "httpx==0.24.1",
+  "pytest==8.4.1",
+  "pytest-cov==6.2.1",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
