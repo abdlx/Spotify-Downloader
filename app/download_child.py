@@ -136,7 +136,7 @@ def run(item_id: str) -> int:
             ).fetchone()
         finally:
             conn.close()
-        if previous and previous["normalized_failure_category"] in {"NETWORK_ERROR", "TIMEOUT", "HTTP_429"} and previous["youtube_title"]:
+        if previous and previous["normalized_failure_category"] in {"NETWORK_ERROR", "TIMEOUT", "HTTP_429", "BOT_DETECTION", "YOUTUBE_RATE_LIMIT"} and previous["youtube_title"]:
             match = MatchResult(
                 provider="youtube", url=previous["youtube_url"], video_id=previous["youtube_video_id"],
                 title=previous["youtube_title"], channel=previous["channel"],
@@ -188,7 +188,8 @@ def run(item_id: str) -> int:
         return 0
     except Exception as exc:
         code, friendly = classify_error(exc)
-        record_attempt(item, stage, match=match, search_query=query, category=code, error=exc)
+        record_attempt(item, getattr(exc, "stage", None) or stage, match=match, search_query=query,
+                       category=code, error=exc)
         attempt = int(item["attempt"])
         if code == "DISK_FULL":
             with transaction(immediate=True) as conn:

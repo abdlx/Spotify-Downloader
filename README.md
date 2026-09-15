@@ -98,7 +98,7 @@ Never commit `.env`.
 
 ## Job behavior
 
-- A track gets up to four attempts, with 10, 30, and 90 second delays between retries.
+- Transient network errors retry with bounded backoff and jitter. YouTube bot/rate-limit challenges cool the whole queue before retrying; permanent match, conversion, and filesystem errors remain visible with their exact backend diagnostics.
 - One failed track does not abort its collection.
 - **Retry failed** resets only failed rows.
 - **Pause** prevents new rows from starting. Active tracks finish when practical.
@@ -116,6 +116,14 @@ http://localhost:3000/api/health
 ```
 
 It checks the database, worker heartbeat, downloads mount, spotDL, yt-dlp, EJS, Deno, FFmpeg, and ffprobe.
+
+To inspect the latest download job without a terminal, open the read-only diagnostics URL on the same host as Lilt:
+
+```text
+http://localhost:3000/api/diagnostics/latest
+```
+
+It reports failure categories, pipeline stages, matched URLs, and redacted raw error excerpts. Add `?examples=25` for more tracks, or use `/api/jobs/<job-id>/diagnostics` for a specific job. This endpoint does not start or retry downloads.
 
 View structured logs:
 

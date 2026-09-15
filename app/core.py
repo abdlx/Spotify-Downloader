@@ -155,10 +155,16 @@ def safe_download_path(root: Path, relative: str) -> Path:
 def classify_error(exc: BaseException) -> tuple[str, str]:
     message = getattr(exc, "classification_error", None) or getattr(exc, "raw_error", None) or str(exc).strip() or exc.__class__.__name__
     lowered = message.lower()
+    if "reinitializing song" in lowered:
+        if "429" in lowered or "rate limit" in lowered:
+            return "SPOTIFY_RATE_LIMIT", "Spotify temporarily limited metadata requests."
+        return "SPOTIFY_METADATA_ERROR", "Spotify metadata could not be refreshed."
     if "no results" in lowered or "no match" in lowered:
         return "NO_MATCH", "No suitable YouTube match was found for this track."
     if "sign in to confirm" in lowered or "not a bot" in lowered:
         return "BOT_DETECTION", "YouTube requested bot verification."
+    if "this content isn't available, try again later" in lowered:
+        return "YOUTUBE_RATE_LIMIT", "YouTube temporarily limited video requests."
     if "429" in lowered or "rate limit" in lowered:
         return "HTTP_429", "The source is rate-limiting requests."
     if "403" in lowered or "forbidden" in lowered:

@@ -15,7 +15,8 @@ def test_spotdl_download_adapter_contains_upstream_configuration(monkeypatch, tm
             captured["kwargs"] = kwargs
             self.downloader = SimpleNamespace(
                 audio_providers=[SimpleNamespace(audio_handler=SimpleNamespace(params={}))],
-                progress_handler=SimpleNamespace(update_callback=None, web_ui=False),
+                progress_handler=SimpleNamespace(update_callback=None, web_ui=False,
+                                                 get_new_tracker=lambda song: SimpleNamespace(notify_error=lambda *_: None)),
             )
             captured["instance"] = self
 
@@ -53,3 +54,17 @@ def test_spotdl_download_adapter_contains_upstream_configuration(monkeypatch, tm
     )
     assert captured["instance"].downloader.audio_providers[0].audio_handler.params["proxy"] == "http://127.0.0.1:8080"
     assert progress == [("Downloading", 61.0)]
+
+
+def test_resolved_playlist_record_does_not_force_spotify_refetch():
+    track = {
+        "title": "Count on Me", "artists": ["Bruno Mars"],
+        "source_id": "spotify-id", "source_url": "https://open.spotify.com/track/spotify-id",
+        "album": "Doo-Wops", "album_artist": "Bruno Mars", "duration_ms": 197000,
+        "disc_number": 1, "disc_count": None, "track_number": 3, "track_count": 12,
+        "genres": [], "metadata": {"album_id": "album-id"},
+    }
+    song = SpotdlAdapter.record_to_song(track, list_name="test", position=1, list_length=162)
+    required = ("genres", "disc_count", "tracks_count", "track_number", "album_id", "album_artist")
+    assert all(getattr(song, field) is not None for field in required)
+    assert song.disc_count == 1

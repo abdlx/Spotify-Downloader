@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import traceback
 import unittest
@@ -57,6 +58,26 @@ class DiagnosticTests(unittest.TestCase):
                     self.assertIn("Too Many Requests", row["raw_error"])
                 finally:
                     conn.close()
+                with db.transaction(immediate=True) as conn:
+                    conn.execute("UPDATE job_items SET status='FAILED', error_code='HTTP_429' WHERE id='i'")
+                from app.api import app, latest_download_diagnostics
+                self.assertIn("/api/diagnostics/latest", {route.path for route in app.routes})
+                response = latest_download_diagnostics(examples=15)
+                payload = json.loads(response.body)
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.headers["cache-control"], "no-store")
+                self.assertEqual(payload["diagnostic_categories"], {"HTTP_429": 1})
+                self.assertIn("Too Many Requests", payload["examples"][0]["raw_error_tail"])
+
+    def test_resolved_playlist_record_skips_spotify_refetch(self):
+        track = {"title": "Count on Me", "artists": ["Bruno Mars"],
+                 "source_id": "spotify-id", "source_url": "https://open.spotify.com/track/spotify-id",
+                 "album": "Doo-Wops", "album_artist": "Bruno Mars", "duration_ms": 197000,
+                 "disc_number": 1, "disc_count": None, "track_number": 3, "track_count": 12,
+                 "genres": [], "metadata": {"album_id": "album-id"}}
+        song = SpotdlAdapter.record_to_song(track, list_name="test", position=1, list_length=162)
+        required = ("genres", "disc_count", "tracks_count", "track_number", "album_id", "album_artist")
+        self.assertTrue(all(getattr(song, field) is not None for field in required))
 
     def test_spotdl_caught_exception_keeps_yt_dlp_cause(self):
         class Tracker:
@@ -106,9 +127,36 @@ class DiagnosticTests(unittest.TestCase):
         self.assertEqual(result.video_id, "right")
         self.assertIn("official audio", result.search_query)
 
+    def test_confident_primary_match_does_not_run_fallback_queries(self):
+        candidate = Candidate("Artist - Song", "Artist", 200, "first", "https://youtube.com/watch?v=first")
+        queries = []
+
+        class Provider:
+            def __init__(self, **kwargs):
+                self.audio_handler = SimpleNamespace(params={})
+
+            def get_results(self, query):
+                queries.append(query)
+                return [candidate]
+
+        song = SimpleNamespace(artists=["Artist"], name="Song", duration=200,
+                               display_name="Artist - Song")
+        with patch("spotdl.providers.audio.youtube.YouTube", Provider), patch("spotdl.utils.matching.order_results", lambda results, song: {result: 95 for result in results}):
+            MusicMatcher().find_match(song, {"low_confidence_threshold": 0.72})
+        self.assertEqual(queries, ["Artist - Song"])
+
+    def test_spotify_refetch_failure_is_not_a_youtube_429(self):
+        error = SpotdlDownloadError(
+            "Error occurred while reinitializing song: HTTP 429",
+            spotdl_error="Error occurred while reinitializing song: HTTP 429",
+        )
+        self.assertEqual(error.stage, "SPOTIFY_METADATA")
+        self.assertEqual(classify_error(error)[0], "SPOTIFY_RATE_LIMIT")
+
     def test_retry_policy(self):
         self.assertIsNone(retry_at("FFMPEG_ERROR", 1))
         self.assertIsNone(retry_at("NO_MATCH", 1))
+        self.assertGreaterEqual(retry_at("BOT_DETECTION", 1, random_fraction=0)[1], 600)
         self.assertGreater(retry_at("HTTP_429", 1, random_fraction=0)[1],
                            retry_at("NETWORK_ERROR", 1, random_fraction=0)[1])
 

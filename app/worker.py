@@ -11,7 +11,7 @@ import time
 from dataclasses import dataclass
 
 from app import __version__
-from app.config import WORKER_ID
+from app.config import MIN_DOWNLOAD_LAUNCH_INTERVAL_SECONDS, WORKER_ID
 from app.db import connect, emit_event, get_settings, init_db, transaction, utcnow
 from app.logging_config import configure_logging
 from app.repository import update_job_counts
@@ -115,6 +115,7 @@ def main() -> None:
     validate_runtime()
     recover()
     children: dict[str, Child] = {}
+    last_download_launch = float("-inf")
     running = True
 
     def stop(_signum, _frame):
@@ -192,6 +193,8 @@ def main() -> None:
         concurrency = int(get_settings(include_secret=True).get("concurrency", 2))
         active_downloads = sum(child.kind == "download" for child in children.values())
         while active_downloads < concurrency:
+            if time.monotonic() - last_download_launch < MIN_DOWNLOAD_LAUNCH_INTERVAL_SECONDS:
+                break
             with transaction(immediate=True) as conn:
                 row = conn.execute(
                     """SELECT ji.id, ji.job_id FROM job_items ji JOIN jobs j ON j.id=ji.job_id
@@ -199,7 +202,7 @@ def main() -> None:
                        AND (ji.next_attempt_at IS NULL OR ji.next_attempt_at<=?)
                        AND NOT EXISTS (
                          SELECT 1 FROM job_items cooldown
-                         WHERE cooldown.error_code='HTTP_429' AND cooldown.status='QUEUED'
+                         WHERE cooldown.error_code IN ('HTTP_429','BOT_DETECTION','YOUTUBE_RATE_LIMIT') AND cooldown.status='QUEUED'
                          AND cooldown.next_attempt_at>?
                        )
                        AND NOT EXISTS (
@@ -216,6 +219,7 @@ def main() -> None:
             if not row:
                 break
             children[f"download:{row['id']}"] = Child(launch("app.download_child", row["id"]), "download", row["id"], row["job_id"])
+            last_download_launch = time.monotonic()
             active_downloads += 1
 
         time.sleep(0.75)

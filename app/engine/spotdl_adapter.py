@@ -23,6 +23,7 @@ class SpotdlDownloadError(RuntimeError):
         self.raw_error = raw_error
         self.classification_error = classification_error or raw_error
         self.spotdl_error = spotdl_error
+        self.stage = "SPOTIFY_METADATA" if "reinitializing song" in spotdl_error.lower() else None
         self.ffmpeg_error = ffmpeg_error
         self.ytdlp_error = raw_error if "yt-dlp" in raw_error.lower() or "youtube" in raw_error.lower() else ""
         code = re.search(r"(?:return code|exit code|exited with code)\s*[:=]?\s*(-?\d+)", raw_error, re.I)
@@ -197,7 +198,7 @@ class SpotdlAdapter:
         return Song.from_missing_data(
             name=track["title"], artists=track["artists"], artist=track["artists"][0],
             genres=track.get("genres") or [], disc_number=track.get("disc_number"),
-            disc_count=track.get("disc_count"), album_name=track.get("album"),
+            disc_count=track.get("disc_count") or max(1, track.get("disc_number") or 1), album_name=track.get("album"),
             album_artist=track.get("album_artist"), duration=int((track.get("duration_ms") or 0) / 1000),
             year=int(release_date[:4]) if len(release_date) >= 4 and release_date[:4].isdigit() else None,
             date=release_date, track_number=track.get("track_number"), tracks_count=track.get("track_count"),

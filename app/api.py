@@ -7,10 +7,11 @@ from typing import AsyncIterator
 
 from fastapi import FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from app.core import InputError, parse_spotify_url
 from app.db import connect, get_settings, init_db, json_value, transaction, utcnow
+from app.failure_report import build_failure_report
 from app.health import health_snapshot
 from app.logging_config import configure_logging
 from app.models import ResolveRequest, SettingsPatch
@@ -98,6 +99,22 @@ def download_collection(collection_id: str):
         raise not_found("collection") from exc
     except ValueError as exc:
         raise HTTPException(status_code=409, detail={"code": "COLLECTION_NOT_READY", "message": str(exc)}) from exc
+
+
+@app.get("/api/diagnostics/latest")
+def latest_download_diagnostics(examples: int = Query(15, ge=1, le=25)):
+    report = build_failure_report(examples=examples)
+    if report is None:
+        raise not_found("download job")
+    return JSONResponse(report, headers={"Cache-Control": "no-store"})
+
+
+@app.get("/api/jobs/{job_id}/diagnostics")
+def download_diagnostics(job_id: str, examples: int = Query(15, ge=1, le=25)):
+    report = build_failure_report(job_id, examples=examples)
+    if report is None:
+        raise not_found("download job")
+    return JSONResponse(report, headers={"Cache-Control": "no-store"})
 
 
 @app.get("/api/jobs")

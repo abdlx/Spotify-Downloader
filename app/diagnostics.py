@@ -8,13 +8,15 @@ from app.db import json_value, transaction, utcnow
 from app.logging_config import redact_secrets
 
 
-RETRYABLE = {"NETWORK_ERROR", "TIMEOUT", "HTTP_429", "YOUTUBE_UNAVAILABLE"}
+RETRYABLE = {"NETWORK_ERROR", "TIMEOUT", "HTTP_429", "BOT_DETECTION", "YOUTUBE_RATE_LIMIT", "SPOTIFY_RATE_LIMIT", "YOUTUBE_UNAVAILABLE"}
 
 
 def retry_at(category: str, attempt: int, *, random_fraction: float | None = None) -> tuple[str, int] | None:
     if category not in RETRYABLE:
         return None
-    base = (60, 180, 600) if category == "HTTP_429" else ((5, 15, 30) if category == "YOUTUBE_UNAVAILABLE" else (10, 30, 90))
+    base = ((600, 1800, 3600) if category in {"BOT_DETECTION", "YOUTUBE_RATE_LIMIT"} else
+            ((60, 180, 600) if category in {"HTTP_429", "SPOTIFY_RATE_LIMIT"} else
+             ((5, 15, 30) if category == "YOUTUBE_UNAVAILABLE" else (10, 30, 90))))
     seconds = base[min(max(attempt - 1, 0), len(base) - 1)]
     jitter = random.random() if random_fraction is None else random_fraction
     delay = round(seconds * (1 + 0.25 * jitter))

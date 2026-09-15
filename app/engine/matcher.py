@@ -55,6 +55,7 @@ class MusicMatcher:
         best: MatchResult | None = None
         search_errors: list[str] = []
         expected_versions = set(extract_version_tokens(song.name))
+        threshold = max(0.72, float(settings.get("low_confidence_threshold", 0.72)))
         for query in queries:
             try:
                 candidates = provider.get_results(query)
@@ -84,11 +85,10 @@ class MusicMatcher:
                     )
                     if best is None or result.confidence > best.confidence:
                         best = result
-                if best and best.confidence >= 0.9:
+                if best and best.confidence >= threshold:
                     break
             except Exception as exc:
                 search_errors.append(f"{query}: {exc}")
-        threshold = max(0.72, float(settings.get("low_confidence_threshold", 0.72)))
         if best and best.confidence >= threshold:
             return best
         if search_errors and best is None:
