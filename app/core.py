@@ -153,22 +153,38 @@ def safe_download_path(root: Path, relative: str) -> Path:
 
 
 def classify_error(exc: BaseException) -> tuple[str, str]:
-    message = str(exc).strip() or exc.__class__.__name__
+    message = getattr(exc, "classification_error", None) or getattr(exc, "raw_error", None) or str(exc).strip() or exc.__class__.__name__
     lowered = message.lower()
     if "no results" in lowered or "no match" in lowered:
         return "NO_MATCH", "No suitable YouTube match was found for this track."
+    if "sign in to confirm" in lowered or "not a bot" in lowered:
+        return "BOT_DETECTION", "YouTube requested bot verification."
     if "429" in lowered or "rate limit" in lowered:
-        return "RATE_LIMITED", "The source is rate-limiting requests. The track will retry automatically."
-    if "ffmpeg" in lowered:
-        return "FFMPEG_FAILED", "Audio conversion failed. Review the technical details and retry."
+        return "HTTP_429", "The source is rate-limiting requests."
+    if "403" in lowered or "forbidden" in lowered:
+        return "HTTP_403", "YouTube refused the media request."
+    if "region" in lowered and ("restrict" in lowered or "block" in lowered):
+        return "REGION_RESTRICTED", "The matched video is not available in this region."
+    if "sign in" in lowered or "login required" in lowered or "age-restricted" in lowered:
+        return "AUTH_REQUIRED", "The matched video requires authentication."
+    if "requested format" in lowered or "format is not available" in lowered:
+        return "FORMAT_UNAVAILABLE", "The matched video has no usable audio format."
+    if "extractor" in lowered or "nsig" in lowered or "signature extraction" in lowered:
+        return "EXTRACTOR_ERROR", "YouTube extraction failed."
+    if "ffmpeg" in lowered or "failed to convert" in lowered:
+        return "FFMPEG_ERROR", "Audio conversion failed."
     if "metadata" in lowered or "embed" in lowered:
-        return "TAGGING_FAILED", "The audio downloaded, but metadata could not be embedded."
-    if "permission" in lowered:
-        return "FILESYSTEM_PERMISSION_ERROR", "The downloads directory is not writable."
+        return "METADATA_ERROR", "The audio downloaded, but metadata could not be embedded."
+    if "permission" in lowered or "read-only file system" in lowered:
+        return "FILESYSTEM_ERROR", "The downloads directory is not writable."
     if "no space" in lowered or "disk full" in lowered:
         return "DISK_FULL", "There is not enough free storage to finish this download."
     if "unavailable" in lowered or "private video" in lowered:
-        return "SOURCE_UNAVAILABLE", "The matched source is no longer available."
-    if "network" in lowered or "connection" in lowered or "timeout" in lowered:
+        return "YOUTUBE_UNAVAILABLE", "The matched source is no longer available."
+    if "timeout" in lowered or "timed out" in lowered:
+        return "TIMEOUT", "The media request timed out."
+    if "network" in lowered or "connection" in lowered:
         return "NETWORK_ERROR", "A network error interrupted the operation."
-    return "DOWNLOAD_FAILED", "The download could not be completed."
+    if "process exited" in lowered or "subprocess" in lowered:
+        return "PROCESS_ERROR", "The download process stopped unexpectedly."
+    return "UNKNOWN", "The download could not be completed."

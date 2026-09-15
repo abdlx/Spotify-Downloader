@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import re
 from typing import Any, Callable, Iterator
 
 from app.config import DATA_DIR, DOWNLOADS_DIR, SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET, USE_OFFICIAL_SPOTIFY
@@ -14,6 +15,18 @@ class CollectionDiscovery:
     description: str | None
     total: int
     songs: Iterator[tuple[int, dict[str, Any]]]
+
+
+class SpotdlDownloadError(RuntimeError):
+    def __init__(self, raw_error: str, *, classification_error: str = "", spotdl_error: str = "", ffmpeg_error: str = "") -> None:
+        super().__init__(classification_error or raw_error)
+        self.raw_error = raw_error
+        self.classification_error = classification_error or raw_error
+        self.spotdl_error = spotdl_error
+        self.ffmpeg_error = ffmpeg_error
+        self.ytdlp_error = raw_error if "yt-dlp" in raw_error.lower() or "youtube" in raw_error.lower() else ""
+        code = re.search(r"(?:return code|exit code|exited with code)\s*[:=]?\s*(-?\d+)", raw_error, re.I)
+        self.exit_code = int(code.group(1)) if code else None
 
 
 class SpotdlAdapter:
@@ -235,7 +248,40 @@ class SpotdlAdapter:
 
         spotdl.downloader.progress_handler.update_callback = progress
         spotdl.downloader.progress_handler.web_ui = True
+        captured: list[str] = []
+        causes: list[str] = []
+        get_tracker = spotdl.downloader.progress_handler.get_new_tracker
+
+        def diagnostic_tracker(*args, **kwargs):
+            tracker = get_tracker(*args, **kwargs)
+            notify_error = tracker.notify_error
+
+            def capture_error(traceback_text, exception, finish=False):
+                captured.append(str(traceback_text))
+                seen: set[int] = set()
+                current = exception
+                while current is not None and id(current) not in seen:
+                    seen.add(id(current))
+                    causes.append(f"{current.__class__.__name__}: {current}")
+                    current = current.__cause__ or current.__context__
+                notify_error(traceback_text, exception, finish)
+
+            tracker.notify_error = capture_error
+            return tracker
+
+        spotdl.downloader.progress_handler.get_new_tracker = diagnostic_tracker
         _, output = spotdl.download(song)
         if not output or not Path(output).is_file():
-            raise RuntimeError("spotDL did not produce an output file")
+            spotdl_error = "\n".join(str(error) for error in spotdl.downloader.errors)
+            raw = "\n".join(captured) or spotdl_error or "spotDL did not produce an output file"
+            ffmpeg_error = ""
+            if "ffmpeg_error_" in raw:
+                from spotdl.utils.config import get_errors_path
+                for file in sorted(get_errors_path().glob("ffmpeg_error_*.txt"), key=lambda path: path.stat().st_mtime, reverse=True)[:3]:
+                    if str(file) in raw:
+                        ffmpeg_error = file.read_text(encoding="utf-8", errors="replace")
+                        raw += "\n" + ffmpeg_error
+                        break
+            raise SpotdlDownloadError(raw, classification_error=("\n".join(causes) + "\n" + ffmpeg_error).strip() or spotdl_error,
+                                      spotdl_error=spotdl_error, ffmpeg_error=ffmpeg_error)
         return Path(output)

@@ -59,7 +59,7 @@ def run(job_id: str) -> int:
         return 0
     except Exception as exc:
         code, friendly = classify_error(exc)
-        if code not in {"NETWORK_ERROR", "RATE_LIMITED"}:
+        if code not in {"NETWORK_ERROR", "HTTP_429", "TIMEOUT"}:
             code, friendly = "COLLECTION_RESOLUTION_FAILED", "Spotify metadata could not be resolved. Check the link and your connection."
         now = utcnow()
         with transaction(immediate=True) as conn:

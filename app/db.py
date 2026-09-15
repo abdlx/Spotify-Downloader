@@ -133,6 +133,35 @@ CREATE INDEX IF NOT EXISTS idx_job_items_queue
 CREATE INDEX IF NOT EXISTS idx_job_items_job ON job_items(job_id, position);
 CREATE INDEX IF NOT EXISTS idx_job_items_track ON job_items(track_id, status);
 
+CREATE TABLE IF NOT EXISTS download_attempts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  job_item_id TEXT NOT NULL REFERENCES job_items(id) ON DELETE CASCADE,
+  track_id TEXT NOT NULL REFERENCES tracks(id),
+  attempt INTEGER NOT NULL,
+  spotify_track_id TEXT NOT NULL,
+  spotify_url TEXT NOT NULL,
+  title TEXT NOT NULL,
+  artists_json TEXT NOT NULL,
+  duration_ms INTEGER,
+  youtube_url TEXT,
+  youtube_video_id TEXT,
+  search_query TEXT,
+  match_confidence REAL,
+  pipeline_stage TEXT NOT NULL,
+  normalized_failure_category TEXT,
+  raw_error TEXT,
+  raw_spotdl_error TEXT,
+  raw_ytdlp_error TEXT,
+  raw_ffmpeg_error TEXT,
+  subprocess_exit_code INTEGER,
+  http_status INTEGER,
+  started_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(job_item_id, attempt)
+);
+CREATE INDEX IF NOT EXISTS idx_download_attempts_category
+  ON download_attempts(normalized_failure_category, started_at);
+
 CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value_json TEXT NOT NULL,

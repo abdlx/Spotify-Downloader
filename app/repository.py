@@ -288,7 +288,7 @@ def retry_failed(job_id: str) -> dict[str, Any] | None:
         if not failed:
             raise ValueError("Job has no failed tracks to retry.")
         conn.execute(
-            """UPDATE job_items SET status='QUEUED', attempt=0, progress=0, error=NULL,
+            """UPDATE job_items SET status='QUEUED', progress=0, error=NULL,
                error_code=NULL, next_attempt_at=NULL, updated_at=? WHERE job_id=? AND status='FAILED'""",
             (now, job_id),
         )
@@ -314,7 +314,7 @@ def retry_item(item_id: str) -> dict[str, Any] | None:
         if row["status"] != "FAILED":
             raise ValueError("Only failed tracks can be retried.")
         conn.execute(
-            """UPDATE job_items SET status='QUEUED', attempt=0, progress=0, error=NULL,
+            """UPDATE job_items SET status='QUEUED', progress=0, error=NULL,
                error_code=NULL, next_attempt_at=NULL, updated_at=? WHERE id=?""",
             (now, item_id),
         )

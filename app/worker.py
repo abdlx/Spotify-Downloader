@@ -11,7 +11,7 @@ import time
 from dataclasses import dataclass
 
 from app import __version__
-from app.config import MAX_ATTEMPTS, RETRY_DELAYS, WORKER_ID
+from app.config import WORKER_ID
 from app.db import connect, emit_event, get_settings, init_db, transaction, utcnow
 from app.logging_config import configure_logging
 from app.repository import update_job_counts
@@ -98,15 +98,14 @@ def mark_abnormal(item_id: str, job_id: str, returncode: int) -> None:
     if job and job["status"] in ("CANCEL_REQUESTED", "CANCELLED"):
         with transaction(immediate=True) as conn:
             conn.execute("UPDATE job_items SET status='CANCELLED', progress=0, updated_at=? WHERE id=?", (now, item_id))
-    elif item["attempt"] < MAX_ATTEMPTS:
-        from datetime import UTC, datetime, timedelta
-        delay = RETRY_DELAYS[min(item["attempt"] - 1, len(RETRY_DELAYS) - 1)]
-        next_at = (datetime.now(UTC) + timedelta(seconds=delay)).isoformat()
-        with transaction(immediate=True) as conn:
-            conn.execute("UPDATE job_items SET status='QUEUED', progress=0, error_code='WORKER_CHILD_EXIT', error=?, next_attempt_at=?, updated_at=? WHERE id=?", (f"Download process exited with code {returncode}.", next_at, now, item_id))
     else:
+        message = f"Download process exited with code {returncode}."
+        from app.diagnostics import record_attempt
+        from app.download_child import _load
+        record_attempt(_load(item_id), item["status"], category="PROCESS_ERROR",
+                       error=RuntimeError(message), subprocess_exit_code=returncode)
         with transaction(immediate=True) as conn:
-            conn.execute("UPDATE job_items SET status='FAILED', progress=100, error_code='WORKER_CHILD_EXIT', error=?, updated_at=? WHERE id=?", (f"Download process exited with code {returncode}.", now, item_id))
+            conn.execute("UPDATE job_items SET status='FAILED', progress=100, error_code='PROCESS_ERROR', error=?, updated_at=? WHERE id=?", (message, now, item_id))
     update_job_counts(job_id)
 
 
@@ -124,7 +123,8 @@ def main() -> None:
 
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
-    logger.info("worker ready", extra={"event": "worker_ready"})
+    versions = {name: importlib.metadata.version(name) for name in ("spotdl", "yt-dlp", "yt-dlp-ejs")}
+    logger.info("worker ready; runtime packages: %s", versions, extra={"event": "worker_ready"})
     while running:
         heartbeat()
         for key, child in list(children.items()):
@@ -198,11 +198,16 @@ def main() -> None:
                        WHERE ji.status='QUEUED' AND j.status IN ('QUEUED','DOWNLOADING')
                        AND (ji.next_attempt_at IS NULL OR ji.next_attempt_at<=?)
                        AND NOT EXISTS (
+                         SELECT 1 FROM job_items cooldown
+                         WHERE cooldown.error_code='HTTP_429' AND cooldown.status='QUEUED'
+                         AND cooldown.next_attempt_at>?
+                       )
+                       AND NOT EXISTS (
                          SELECT 1 FROM job_items active
                          WHERE active.track_id=ji.track_id AND active.id<>ji.id
                          AND active.status IN ('SEARCHING','MATCHED','DOWNLOADING','TRANSCODING','TAGGING')
                        )
-                       ORDER BY ji.created_at, ji.position LIMIT 1""", (utcnow(),)
+                       ORDER BY ji.created_at, ji.position LIMIT 1""", (utcnow(), utcnow())
                 ).fetchone()
                 if row:
                     now = utcnow()
