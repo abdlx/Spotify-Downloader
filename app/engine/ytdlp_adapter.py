@@ -47,7 +47,7 @@ class YtDlpAdapter:
             candidates.append(
                 YtDlpCandidate(
                     video_id=str(entry["id"]),
-                    url=entry.get("webpage_url") or entry.get("url") or f"https://www.youtube.com/watch?v={entry['id']}",
+                    url=f"https://www.youtube.com/watch?v={entry['id']}",
                     title=entry.get("title") or "Unknown title",
                     channel=entry.get("channel") or entry.get("uploader") or "Unknown channel",
                     duration_ms=round(float(duration) * 1000) if duration is not None else None,

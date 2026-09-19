@@ -6,6 +6,7 @@ import shutil
 import subprocess
 from collections import Counter
 
+from app.core import classify_error
 from app.db import connect
 from app.logging_config import redact_secrets
 
@@ -37,6 +38,8 @@ def build_failure_report(job_id: str | None = None, *, examples: int = 15) -> di
         failures = [row for row in items if row["status"] == "FAILED"]
         codes = Counter(row["error_code"] or "NONE" for row in failures)
         categories = Counter(row["normalized_failure_category"] or "NO_ATTEMPT_DIAGNOSTIC" for row in failures)
+        inferred_categories = Counter(classify_error(RuntimeError(row["raw_error"]))[0]
+                                      if row["raw_error"] else "NO_RAW_ERROR" for row in failures)
         stages = Counter(row["pipeline_stage"] or "UNKNOWN" for row in failures)
         priority = [row for row in failures if any(name.lower() in row["title"].lower() for name in MAINSTREAM)]
         priority_ids = {row["id"] for row in priority}
@@ -53,6 +56,8 @@ def build_failure_report(job_id: str | None = None, *, examples: int = 15) -> di
                 "artists": json.loads(row["artists_json"]), "spotify_track_id": row["source_id"],
                 "attempt": row["attempt"], "stage": row["pipeline_stage"],
                 "category": row["normalized_failure_category"] or row["error_code"],
+                "category_inferred_from_raw": classify_error(RuntimeError(row["raw_error"]))[0]
+                if row["raw_error"] else None,
                 "youtube_url": row["youtube_url"], "search_query": row["search_query"],
                 "confidence": row["match_confidence"], "http_status": row["http_status"],
                 "exit_code": row["subprocess_exit_code"],
@@ -85,7 +90,9 @@ def build_failure_report(job_id: str | None = None, *, examples: int = 15) -> di
             "failed_with_current_attempt_match": sum(bool(row["youtube_video_id"]) for row in failures),
             "job_created_at": job["created_at"], "job_completed_at": job["completed_at"],
             "runtime_versions": versions, "failure_codes": dict(codes),
-            "diagnostic_categories": dict(categories), "failure_stages": dict(stages),
+            "diagnostic_categories": dict(categories),
+            "categories_inferred_from_raw_errors": dict(inferred_categories),
+            "failure_stages": dict(stages),
             "outcomes_by_position_quartile": dict(quartiles),
             "first_failed_at": min((row["updated_at"] for row in failures), default=None),
             "last_failed_at": max((row["updated_at"] for row in failures), default=None),

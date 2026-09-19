@@ -10,7 +10,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import app.db as db
-from app.core import classify_error
+from app.core import calculate_match_confidence, classify_error, extract_version_tokens
 from app.diagnostics import record_attempt, retry_at
 from app.engine.matcher import MusicMatcher
 from app.engine.spotdl_adapter import SpotdlAdapter, SpotdlDownloadError
@@ -18,10 +18,10 @@ from app.engine.spotdl_adapter import SpotdlAdapter, SpotdlDownloadError
 
 @dataclass(frozen=True)
 class Candidate:
-    name: str
-    author: str
-    duration: int
-    result_id: str
+    title: str
+    channel: str
+    duration_ms: int
+    video_id: str
     url: str
 
 
@@ -110,38 +110,38 @@ class DiagnosticTests(unittest.TestCase):
         self.assertEqual(classify_error(caught.exception)[0], "HTTP_429")
 
     def test_fallback_keeps_exact_version(self):
-        wrong = Candidate("Artist - Song", "Artist", 200, "wrong", "https://youtube.com/watch?v=wrong")
-        right = Candidate("Artist - Song (Slowed)", "Artist", 201, "right", "https://youtube.com/watch?v=right")
+        wrong = Candidate("Artist - Song", "Artist", 200000, "wrong", "https://youtube.com/watch?v=wrong")
+        right = Candidate("Artist - Song (Slowed)", "Artist", 201000, "right", "https://youtube.com/watch?v=right")
 
-        class Provider:
+        class Adapter:
             def __init__(self, **kwargs):
-                self.audio_handler = SimpleNamespace(params={})
+                pass
 
-            def get_results(self, query):
+            def search(self, query, *, limit=10):
                 return [wrong] if "official audio" not in query else [right]
 
         song = SimpleNamespace(artists=["Artist"], name="Song (Slowed)", duration=200,
                                display_name="Artist - Song (Slowed)")
-        with patch("spotdl.providers.audio.youtube.YouTube", Provider), patch("spotdl.utils.matching.order_results", lambda results, song: {result: 95 for result in results}):
+        with patch("app.engine.matcher.YtDlpAdapter", Adapter):
             result = MusicMatcher().find_match(song, {"low_confidence_threshold": 0.72})
         self.assertEqual(result.video_id, "right")
         self.assertIn("official audio", result.search_query)
 
     def test_confident_primary_match_does_not_run_fallback_queries(self):
-        candidate = Candidate("Artist - Song", "Artist", 200, "first", "https://youtube.com/watch?v=first")
+        candidate = Candidate("Artist - Song", "Artist", 200000, "first", "https://youtube.com/watch?v=first")
         queries = []
 
-        class Provider:
+        class Adapter:
             def __init__(self, **kwargs):
-                self.audio_handler = SimpleNamespace(params={})
+                pass
 
-            def get_results(self, query):
+            def search(self, query, *, limit=10):
                 queries.append(query)
                 return [candidate]
 
         song = SimpleNamespace(artists=["Artist"], name="Song", duration=200,
                                display_name="Artist - Song")
-        with patch("spotdl.providers.audio.youtube.YouTube", Provider), patch("spotdl.utils.matching.order_results", lambda results, song: {result: 95 for result in results}):
+        with patch("app.engine.matcher.YtDlpAdapter", Adapter):
             MusicMatcher().find_match(song, {"low_confidence_threshold": 0.72})
         self.assertEqual(queries, ["Artist - Song"])
 
@@ -152,6 +152,105 @@ class DiagnosticTests(unittest.TestCase):
         )
         self.assertEqual(error.stage, "SPOTIFY_METADATA")
         self.assertEqual(classify_error(error)[0], "SPOTIFY_RATE_LIMIT")
+
+    def test_mainstream_flat_candidates_find_exact_audio(self):
+        candidates = [
+            Candidate('"Tum Hi Ho" Aashiqui 2 Full Song With Lyrics', "T-Series", 268000,
+                      "video-one", "https://www.youtube.com/watch?v=video-one"),
+            Candidate("Tum Hi Ho (Lyrics)|Arijit Singh|Aashiqui 2", "Sankalp", 251000,
+                      "video-two", "https://www.youtube.com/watch?v=video-two"),
+            Candidate("Tum hi Ho: Arijit Singh: Aashiqui 2: Hq Audio", "Ali Ahmad flac", 266000,
+                      "video-three", "https://www.youtube.com/watch?v=video-three"),
+        ]
+
+        class Adapter:
+            def __init__(self, **kwargs):
+                pass
+
+            def search(self, query, *, limit=10):
+                return candidates
+
+        song = SimpleNamespace(artists=["Arijit Singh", "Mithoon"], name="Tum Hi Ho",
+                               duration=262, display_name="Arijit Singh - Tum Hi Ho")
+        with patch("app.engine.matcher.YtDlpAdapter", Adapter):
+            match = MusicMatcher().find_match(song, {"low_confidence_threshold": 0.72})
+        self.assertEqual(match.video_id, "video-three")
+        self.assertGreaterEqual(match.confidence, 0.72)
+
+    def test_original_does_not_select_lofi_flip(self):
+        lofi = Candidate("Tum Hi Ho (Lo-fi Flip) - Arijit Singh | Mithoon", "Lo-fi 2307",
+                         256000, "wrong-lofi", "https://www.youtube.com/watch?v=wrong-lofi")
+        original = Candidate("Tum hi Ho: Arijit Singh: Aashiqui 2: Hq Audio", "Ali Ahmad flac",
+                             266000, "original", "https://www.youtube.com/watch?v=original")
+
+        class Adapter:
+            def __init__(self, **kwargs):
+                pass
+
+            def search(self, query, *, limit=10):
+                return [lofi, original]
+
+        song = SimpleNamespace(artists=["Arijit Singh", "Mithoon"], name="Tum Hi Ho",
+                               duration=262, display_name="Arijit Singh - Tum Hi Ho")
+        with patch("app.engine.matcher.YtDlpAdapter", Adapter):
+            result = MusicMatcher().find_match(song, {"low_confidence_threshold": 0.72})
+        self.assertEqual(result.video_id, "original")
+        self.assertIn("lofi", extract_version_tokens(lofi.title))
+
+    def test_unicode_title_scoring_keeps_script(self):
+        exact = calculate_match_confidence(
+            track_title="\u0633\u0631 \u0627\u0644\u062d\u064a\u0627\u0629", artists=["Nagham Debal"], duration_ms=210000,
+            candidate_title="\u0633\u0631 \u0627\u0644\u062d\u064a\u0627\u0629 - Nagham Debal", candidate_channel="Nagham Debal",
+            candidate_duration_ms=210000,
+        )
+        wrong = calculate_match_confidence(
+            track_title="\u0633\u0631 \u0627\u0644\u062d\u064a\u0627\u0629", artists=["Nagham Debal"], duration_ms=210000,
+            candidate_title="\u064a\u0627 \u0644\u064a\u0644 - Nagham Debal", candidate_channel="Nagham Debal",
+            candidate_duration_ms=210000,
+        )
+        self.assertGreater(exact, wrong)
+        self.assertGreaterEqual(exact, 0.72)
+
+    def test_movie_annotation_is_not_a_track_version(self):
+        candidate = Candidate("Lyrical: Duniyaa | Singers: Akhil & Dhvani Bhanushali",
+                              "21WaveMusic", 220000, "duniyaa", "https://www.youtube.com/watch?v=duniyaa")
+
+        class Adapter:
+            def __init__(self, **kwargs):
+                pass
+
+            def search(self, query, *, limit=10):
+                return [candidate]
+
+        song = SimpleNamespace(artists=["Akhil", "Dhvani Bhanushali", "Kunaal Vermaa"],
+                               name='Duniyaa (From "Luka Chuppi")', duration=223,
+                               display_name="Akhil - Duniyaa")
+        with patch("app.engine.matcher.YtDlpAdapter", Adapter):
+            match = MusicMatcher().find_match(song, {"low_confidence_threshold": 0.72})
+        self.assertEqual(match.video_id, "duniyaa")
+        self.assertGreaterEqual(match.confidence, 0.72)
+
+    def test_modified_track_requires_creator_identity(self):
+        candidate = Candidate("the neighbourhood - reflections (sped up)", "Unrelated Upload",
+                              187000, "uncredited", "https://www.youtube.com/watch?v=uncredited")
+
+        class Adapter:
+            def __init__(self, **kwargs):
+                pass
+
+            def search(self, query, *, limit=10):
+                return [candidate]
+
+        song = SimpleNamespace(artists=["OURGRND"], name="Reflections - Sped Up",
+                               duration=187, display_name="OURGRND - Reflections - Sped Up")
+        with patch("app.engine.matcher.YtDlpAdapter", Adapter):
+            with self.assertRaises(LookupError) as caught:
+                MusicMatcher().find_match(song, {"low_confidence_threshold": 0.72})
+        self.assertIn("rejected_identity", str(caught.exception))
+
+    def test_no_match_and_age_verification_categories(self):
+        self.assertEqual(classify_error(LookupError("No suitable YouTube match for Tum Hi Ho"))[0], "NO_MATCH")
+        self.assertEqual(classify_error(RuntimeError("Sign in to confirm your age"))[0], "AUTH_REQUIRED")
 
     def test_retry_policy(self):
         self.assertIsNone(retry_at("FFMPEG_ERROR", 1))

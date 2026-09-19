@@ -15,6 +15,7 @@ from app.failure_report import build_failure_report
 from app.health import health_snapshot
 from app.logging_config import configure_logging
 from app.models import ResolveRequest, SettingsPatch
+from app.validation import create_validation_sample, validation_plan, validation_result
 from app.repository import (
     create_download_job,
     create_or_restart_resolution,
@@ -114,6 +115,32 @@ def download_diagnostics(job_id: str, examples: int = Query(15, ge=1, le=25)):
     report = build_failure_report(job_id, examples=examples)
     if report is None:
         raise not_found("download job")
+    return JSONResponse(report, headers={"Cache-Control": "no-store"})
+
+
+@app.get("/api/jobs/{job_id}/validation-plan")
+def ten_track_validation_plan(job_id: str):
+    plan = validation_plan(job_id)
+    if plan is None:
+        raise not_found("download job")
+    return JSONResponse(plan, headers={"Cache-Control": "no-store"})
+
+
+@app.post("/api/jobs/{job_id}/validation-sample", status_code=202)
+def queue_ten_track_validation(job_id: str):
+    try:
+        return create_validation_sample(job_id)
+    except KeyError as exc:
+        raise not_found("download job") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail={"code": "VALIDATION_PLAN_NOT_READY", "message": str(exc)}) from exc
+
+
+@app.get("/api/jobs/{job_id}/validation-report")
+def ten_track_validation_report(job_id: str):
+    report = validation_result(job_id)
+    if report is None:
+        raise not_found("validation job")
     return JSONResponse(report, headers={"Cache-Control": "no-store"})
 
 

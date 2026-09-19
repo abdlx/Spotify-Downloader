@@ -125,6 +125,14 @@ http://localhost:3000/api/diagnostics/latest
 
 It reports failure categories, pipeline stages, matched URLs, and redacted raw error excerpts. Add `?examples=25` for more tracks, or use `/api/jobs/<job-id>/diagnostics` for a specific job. This endpoint does not start or retry downloads.
 
+For the 162-track recovery job, open `/api/jobs/<job-id>/validation-plan` to review a fixed split of five mainstream and five modified failures. If `ready` is true, run this from the browser console on the Lilt page to queue only those ten tracks:
+
+```javascript
+fetch('/api/jobs/<job-id>/validation-sample', { method: 'POST' }).then(r => r.json()).then(console.log)
+```
+
+The command returns a new job ID. Open `/api/jobs/<new-job-id>/validation-report` to inspect each track's search, match, downloader, conversion, and final state. Repeating the request returns the same sample job; the full recovery playlist is never queued by this route.
+
 View structured logs:
 
 ```bash

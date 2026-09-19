@@ -10,6 +10,18 @@ from urllib.parse import urlsplit, urlunsplit
 
 SPOTIFY_RE = re.compile(r"^/(?:intl-[a-zA-Z-]+/)?(track|playlist|album)/([A-Za-z0-9]{10,32})/?$")
 VERSION_PATTERNS = (
+    ("lofi", re.compile(r"\blo[ -]?fi\b", re.I)),
+    ("flip", re.compile(r"\bflip\b", re.I)),
+    ("hoodtrap", re.compile(r"\bhoodtrap\b", re.I)),
+    ("mylancore", re.compile(r"\bmylancore\b", re.I)),
+    ("nightcore", re.compile(r"\bnightcore\b", re.I)),
+    ("mashup", re.compile(r"\bmash[ -]?up\b", re.I)),
+    ("tiktok", re.compile(r"\btik[ -]?tok\b", re.I)),
+    ("8d audio", re.compile(r"\b8[ -]?d(?:\s+audio)?\b", re.I)),
+    ("pitched down", re.compile(r"\bpitch(?:ed)?\s+down\b", re.I)),
+    ("cover", re.compile(r"\bcover\b", re.I)),
+    ("karaoke", re.compile(r"\bkaraoke\b", re.I)),
+    ("vocals only", re.compile(r"\bvocals?\s+only\b", re.I)),
     ("slowed + reverb", re.compile(r"\bslowed\s*(?:\+|and|&)\s*reverb\b", re.I)),
     ("sped up", re.compile(r"\bsped[ -]?up\b", re.I)),
     ("radio edit", re.compile(r"\bradio edit\b", re.I)),
@@ -65,12 +77,13 @@ def extract_version_tokens(title: str) -> list[str]:
 
 
 def _fold(value: str) -> str:
-    value = unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode()
-    return re.sub(r"[^a-z0-9]+", " ", value.lower()).strip()
+    value = "".join(char for char in unicodedata.normalize("NFKD", value) if not unicodedata.combining(char))
+    return re.sub(r"[_\W]+", " ", value.casefold(), flags=re.UNICODE).strip()
 
 
 def _similarity(left: str, right: str) -> float:
-    return SequenceMatcher(None, _fold(left), _fold(right)).ratio()
+    folded_left, folded_right = _fold(left), _fold(right)
+    return SequenceMatcher(None, folded_left, folded_right).ratio() if folded_left and folded_right else 0.0
 
 
 def calculate_match_confidence(
@@ -86,10 +99,11 @@ def calculate_match_confidence(
     duration_tolerance_seconds: int = 30,
 ) -> float:
     title_score = _similarity(track_title, candidate_title)
-    if _fold(track_title) in _fold(candidate_title):
+    if _fold(track_title) and _fold(track_title) in _fold(candidate_title):
         title_score = max(title_score, 0.98)
     candidate_identity = f"{candidate_title} {candidate_channel}"
-    artist_scores = [1.0 if _fold(artist) in _fold(candidate_identity) else _similarity(artist, candidate_identity) for artist in artists]
+    artist_scores = [1.0 if _fold(artist) and _fold(artist) in _fold(candidate_identity)
+                     else _similarity(artist, candidate_identity) for artist in artists]
     artist_score = sum(artist_scores) / len(artist_scores) if artist_scores else 0
     if duration_ms and candidate_duration_ms:
         delta = abs(duration_ms - candidate_duration_ms) / 1000
@@ -159,8 +173,10 @@ def classify_error(exc: BaseException) -> tuple[str, str]:
         if "429" in lowered or "rate limit" in lowered:
             return "SPOTIFY_RATE_LIMIT", "Spotify temporarily limited metadata requests."
         return "SPOTIFY_METADATA_ERROR", "Spotify metadata could not be refreshed."
-    if "no results" in lowered or "no match" in lowered:
+    if "no results" in lowered or "no match" in lowered or "no suitable youtube match" in lowered:
         return "NO_MATCH", "No suitable YouTube match was found for this track."
+    if "sign in to confirm your age" in lowered or "confirm your age" in lowered:
+        return "AUTH_REQUIRED", "The YouTube result requires age verification."
     if "sign in to confirm" in lowered or "not a bot" in lowered:
         return "BOT_DETECTION", "YouTube requested bot verification."
     if "this content isn't available, try again later" in lowered:
